@@ -1,0 +1,6 @@
+TCPPLAY
+
+TcpPlay is a yet another tool for playing tcpdump saved files (in a libpcap format) 
+back to the network. It's main difference from much more powerfull tcpreplay utility
+is a possibility of using raw sockets which enables to play network traffic 
+on localhost.
