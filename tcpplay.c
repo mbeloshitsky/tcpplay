@@ -8,17 +8,22 @@
 #include <net/if.h>
 #include <pcap.h>
 
+#define ERROR_OK		0
 #define ERROR_PARAMS		1
 #define ERROR_IO		2
 
 char pcap_errbuf[PCAP_ERRBUF_SIZE];
 
-#define IO_INVOKE(x,assert) if ((x) == (assert)) {\
+#define PCAP_INVOKE(x,pcapt,assert) if ((x) == (assert)) {\
 	if (pcap_errbuf[0]!='\0') fprintf(stderr, "%s\n", pcap_errbuf);\
-	perror("IO");\
+	if (pcapt) pcap_perror(pcapt, "PCAP ERROR");\
 	exit(ERROR_IO);\
 }
 
+#define SOCK_INVOKE(x,assert) if ((x) == (assert)) {\
+	perror("SOCK ERROR");\
+	exit(ERROR_IO);\
+}
 
 void sleep_delta_timeval (struct timeval * from, struct timeval * to) {
 	int delta_sec 	= to->tv_sec > from->tv_sec 
@@ -39,12 +44,12 @@ void usage () {
 /********** PCAP INJECT Send method implementation *********/
 void* pcap_inject_init(char * device) {
 	pcap_t* result;
-	IO_INVOKE(result = pcap_open_live(device, 96, 0, 0, pcap_errbuf), NULL); 
+	PCAP_INVOKE(result = pcap_open_live(device, 96, 0, 0, pcap_errbuf), NULL, NULL);
 	return result;
 }
 
 void pcap_inject_send(void* handle, char* data, size_t size) {
-	IO_INVOKE(pcap_inject((pcap_t*)handle, data, size), 0);
+	PCAP_INVOKE(pcap_inject((pcap_t*)handle, data, size), (pcap_t*)handle, 0);
 }
 
 /********* SOCKRAW Send method implementation ********/
@@ -55,10 +60,10 @@ void* sockraw_init(char * device) {
 	struct ifreq netif;
 	memset(&netif, 0, sizeof(netif));
 	strncpy(netif.ifr_ifrn.ifrn_name, device, IFNAMSIZ);	
-	IO_INVOKE(*p_sd = socket(PF_INET, SOCK_RAW, IPPROTO_RAW), -1);
-  	IO_INVOKE(setsockopt(*p_sd, IPPROTO_IP, IP_HDRINCL,
+	SOCK_INVOKE(*p_sd = socket(PF_INET, SOCK_RAW, IPPROTO_RAW), -1);
+  	SOCK_INVOKE(setsockopt(*p_sd, IPPROTO_IP, IP_HDRINCL,
                   		(char*)&optval, sizeof(optval)), -1);
-	IO_INVOKE(setsockopt(*p_sd, SOL_SOCKET, SO_BINDTODEVICE, &netif, sizeof(netif)), -1);
+	SOCK_INVOKE(setsockopt(*p_sd, SOL_SOCKET, SO_BINDTODEVICE, &netif, sizeof(netif)), -1);
 	return (void*)p_sd;	
 }
 
@@ -71,7 +76,7 @@ void sockraw_send(void* handle, char * data, size_t size) {
 	addr.sin_port		= htons(0);
 	addr.sin_addr.s_addr 	= *(int*)&data[ip_offset+ip_addr_offset];
 
-	IO_INVOKE(sendto(*(int*)handle, data+ip_offset, size-ip_offset, 0, (const struct sockaddr*)&addr, sizeof(addr)), -1);
+	SOCK_INVOKE(sendto(*(int*)handle, data+ip_offset, size-ip_offset, 0, (const struct sockaddr*)&addr, sizeof(addr)), -1);
 }
 
 int main(int argc, char *argv[])
@@ -88,7 +93,7 @@ int main(int argc, char *argv[])
 	int	            sockraw_out	= 0;
 
 	char*		    in_file	= NULL;
-	char*	            out_device	= NULL;
+	char*	            out_device	= "";
 
 	void* (*p_sendmethod_init)(char*)			= NULL;
 	void  (*p_sendmethod_send)(void*, char*, size_t)	= NULL;
@@ -117,6 +122,7 @@ int main(int argc, char *argv[])
 				break;
 			default:
 				usage();
+				break;
 		}
 	}
 
@@ -125,12 +131,12 @@ int main(int argc, char *argv[])
 
 	in_file = argv[optind];
 	
-	IO_INVOKE(pcap_in = pcap_open_offline(in_file, pcap_errbuf), NULL);
+	PCAP_INVOKE(pcap_in = pcap_open_offline(in_file, pcap_errbuf), NULL, NULL);
 	send_out = (*p_sendmethod_init) (out_device);
 	
 	int read_status = 1;
 	while (read_status >= 0) {
-		IO_INVOKE(read_status = pcap_next_ex(pcap_in, &pkt_header, &pkt_data), -1);
+		PCAP_INVOKE(read_status = pcap_next_ex(pcap_in, &pkt_header, &pkt_data), NULL, -1);
 
 		if (prev_ts == NULL) {
 			prev_ts = (struct timeval*)malloc(sizeof(struct timeval));
@@ -143,5 +149,5 @@ int main(int argc, char *argv[])
 		(*p_sendmethod_send)(send_out, (char*)pkt_data, pkt_header->len);
 	}
 
-	exit(0);
+	exit(ERROR_OK);
 }
